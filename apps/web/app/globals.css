@@ -1,0 +1,162 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-graphite-950 text-graphite-200;
+}
+
+.skeleton {
+  background-image: linear-gradient(
+    90deg,
+    theme("colors.graphite.800") 0px,
+    theme("colors.graphite.700") 40px,
+    theme("colors.graphite.800") 80px
+  );
+  background-size: 936px 100%;
+}
+
+::selection {
+  background: theme("colors.emerald.DEFAULT" / 35%);
+}
+
+@keyframes ticker {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@property --angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes border-spin {
+  to {
+    --angle: 360deg;
+  }
+}
+
+.gradient-border {
+  position: relative;
+  isolation: isolate;
+}
+
+.gradient-border::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(from var(--angle), #10b981, #00e5ff, #8b5cf6, #f59e0b, #10b981);
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: border-spin 4s linear infinite;
+}
+
+.mesh-background {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: radial-gradient(circle, rgba(16, 185, 129, 0.14) 1px, transparent 1px);
+  background-size: 34px 34px;
+  animation: mesh-pan 90s linear infinite;
+}
+
+@keyframes mesh-pan {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 340px 340px;
+  }
+}
+
+@keyframes orbit {
+  from {
+    transform: rotateY(0deg) rotateX(12deg);
+  }
+  to {
+    transform: rotateY(360deg) rotateX(12deg);
+  }
+}
+
+@keyframes orbit-Y {
+  from {
+    transform: rotateY(0deg);
+  }
+  to {
+    transform: rotateY(360deg);
+  }
+}
+
+@keyframes orbit-X {
+  from {
+    transform: rotateX(0deg);
+  }
+  to {
+    transform: rotateX(360deg);
+  }
+}
+
+@keyframes orbit-Z {
+  from {
+    transform: rotateZ(0deg) rotateX(60deg);
+  }
+  to {
+    transform: rotateZ(360deg) rotateX(60deg);
+  }
+}
+
+@keyframes float-particle {
+  0%,
+  100% {
+    transform: translate(0, 0);
+    opacity: 0.3;
+  }
+  50% {
+    transform: translate(6px, -10px);
+    opacity: 1;
+  }
+}
+
+@keyframes data-flicker {
+  0%,
+  92%,
+  100% {
+    opacity: 1;
+  }
+  94% {
+    opacity: 0.4;
+  }
+  96% {
+    opacity: 0.85;
+  }
+}
+
+.data-stream {
+  animation: data-flicker 3.2s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(16, 185, 129, 0);
+  }
+}
+
+.pulse-dot {
+  animation: pulse-dot 1.8s ease-out infinite;
+}

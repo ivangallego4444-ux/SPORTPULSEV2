@@ -1,0 +1,45 @@
+# Node / Next.js
+node_modules/
+.next/
+out/
+dist/
+build/
+.turbo/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+
+# Env files (never commit secrets/local overrides)
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+uvicorn.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.claude/
+
+# Test / coverage
+coverage/
+.coverage
+htmlcov/
+
+# Build artifacts / caches
+*.tsbuildinfo
+
+# NOTE: apps/api/.cache_store.json is intentionally NOT ignored — it's
+# committed on purpose so a fresh cloud deploy starts pre-warmed with real
+# match/standings/badge data instead of hitting the rate-limited free API
+# cold (see apps/api/app/main.py's snapshot warm-up on startup).
