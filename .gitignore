@@ -38,6 +38,7 @@ htmlcov/
 
 # Build artifacts / caches
 *.tsbuildinfo
+*.zip
 
 # NOTE: apps/api/.cache_store.json is intentionally NOT ignored — it's
 # committed on purpose so a fresh cloud deploy starts pre-warmed with real
