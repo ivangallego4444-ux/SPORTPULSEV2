@@ -230,12 +230,17 @@ app = FastAPI(title="SportPulse API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3100",
-        "http://127.0.0.1:3100",
-        "http://localhost:3120",
-        "http://127.0.0.1:3120",
-    ],
+    # Real bug found live: a hardcoded localhost-only origin list worked
+    # for local dev but silently blocked the real deployed frontend
+    # (Vercel) from ever reaching this API — the browser's own CORS
+    # preflight would reject it with no visible server-side error. "*" is
+    # deliberately safe here: every route is a public, read-only GET (no
+    # auth, no cookies, no state-changing endpoint), and allow_credentials
+    # is left at its default False, which is required for "*" to be a
+    # valid combination at all. It also means every Vercel preview
+    # deployment (a new, unpredictable *.vercel.app subdomain each time)
+    # works without needing its URL added here by hand.
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
