@@ -65,15 +65,6 @@ async def test_openligadb_standings_map_real_fixture():
 
 
 @pytest.mark.asyncio
-async def test_openligadb_cup_has_no_standings_by_design():
-    # DFB-Pokal is a knockout cup: never call the table endpoint, never
-    # fabricate a table for it.
-    async with httpx.AsyncClient() as client:
-        standings = await OpenLigaDBProvider().get_standings(client, "dfb-pokal")
-    assert standings is None
-
-
-@pytest.mark.asyncio
 async def test_thesportsdb_nba_structured_matches_map_real_fixture():
     data = load("thesportsdb_nba_season.json")
     with respx.mock:

@@ -139,10 +139,12 @@ COMPETITIONS: dict[str, Competition] = {
     "primeira-liga": Competition(
         sport="futbol", slug="primeira-liga", name="Primeira Liga", source=SOURCE,
         supports_standings=True, supports_upcoming=True, country="Portugal",
+        badge_url="https://r2.thesportsdb.com/images/media/league/badge/3tgdke1782689102.png",
     ),
     "eredivisie": Competition(
         sport="futbol", slug="eredivisie", name="Eredivisie", source=SOURCE,
         supports_standings=True, supports_upcoming=True, country="Países Bajos",
+        badge_url="https://r2.thesportsdb.com/images/media/league/badge/5cdsu21725984946.png",
     ),
 }
 

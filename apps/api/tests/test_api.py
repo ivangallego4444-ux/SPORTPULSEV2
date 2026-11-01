@@ -98,7 +98,7 @@ def test_list_sports_only_includes_verified_ones():
     assert slugs == {"futbol", "baloncesto", "tenis"}
 
 
-def test_futbol_competitions_include_all_fourteen():
+def test_futbol_competitions_include_all_thirteen():
     with TestClient(app) as client:
         resp = client.get("/api/sports/futbol/competitions")
     assert resp.status_code == 200
@@ -106,7 +106,6 @@ def test_futbol_competitions_include_all_fourteen():
     assert slugs == {
         "bundesliga",
         "2-bundesliga",
-        "dfb-pokal",
         "laliga",
         "premier-league",
         "serie-a",
@@ -167,13 +166,6 @@ def test_nba_standings_endpoint_reports_unavailable_not_error():
     # say so explicitly (null) rather than 500 or a fabricated table.
     with TestClient(app) as client:
         resp = client.get("/api/competitions/nba/standings")
-    assert resp.status_code == 200
-    assert resp.json()["standings"] is None
-
-
-def test_dfb_pokal_standings_endpoint_reports_unavailable_not_error():
-    with TestClient(app) as client:
-        resp = client.get("/api/competitions/dfb-pokal/standings")
     assert resp.status_code == 200
     assert resp.json()["standings"] is None
 

@@ -16,7 +16,6 @@ BASE_URL = "https://api.openligadb.de"
 _SHORTCUTS = {
     "bundesliga": "bl1",
     "2-bundesliga": "bl2",
-    "dfb-pokal": "dfb",
 }
 
 COMPETITIONS: dict[str, Competition] = {
@@ -46,17 +45,6 @@ COMPETITIONS: dict[str, Competition] = {
         supports_upcoming=True,
         country="Alemania",
         badge_url="https://r2.thesportsdb.com/images/media/league/badge/hl40981534764789.png",
-    ),
-    "dfb-pokal": Competition(
-        sport="futbol",
-        slug="dfb-pokal",
-        name="DFB-Pokal",
-        source=SOURCE,
-        supports_standings=False,
-        supports_upcoming=True,
-        country="Alemania",
-        badge_url="https://r2.thesportsdb.com/images/media/league/badge/tlczpm1780941454.png",
-        notes="Competición de eliminatorias: no existe tabla de clasificación.",
     ),
 }
 

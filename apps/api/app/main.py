@@ -58,13 +58,18 @@ configure_crest_store(Path(__file__).resolve().parent.parent / ".crest_store.jso
 openfootball_provider = OpenFootballProvider()
 
 _BACKGROUND_REFRESH_ENABLED = os.environ.get("SPORTPULSE_DISABLE_BACKGROUND_REFRESH") != "1"
-FULL_REFRESH_INTERVAL_SECONDS = 15 * 60
+FULL_REFRESH_INTERVAL_SECONDS = 5 * 60
 """Every competition's matches/standings, plus the cross-competition pool
 and its SoS/Dynamic Season Rating indices, rebuilt and swapped into
 `_snapshot` on this cadence — in the background, never inside a request.
-15 minutes keeps the data fresh enough for anything that isn't literally
-live (that's LIVE_REFRESH_INTERVAL_SECONDS below) without hammering the
-free key every few seconds for twelve-plus competitions at once."""
+Bumped from 15 to 5 minutes at the user's explicit request for faster
+convergence. Safe at this cadence specifically because of the per-round
+disk persistence in thesportsdb._fetch_one_round: a round already known
+to be *all finished* is served straight from disk with zero network
+calls on every single pass, so a 5-minute cycle doesn't re-pay for a
+whole season's worth of rounds each time — it only ever pays (one
+request each) for whichever rounds are still genuinely in progress or
+upcoming, plus one cheap current-round discovery call per competition."""
 
 LIVE_REFRESH_INTERVAL_SECONDS = 25
 """The livescore endpoint is one cheap shared call covering every
