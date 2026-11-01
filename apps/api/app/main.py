@@ -330,8 +330,8 @@ SEGUNDA_ROUNDS = 42
 """22 teams, double round-robin: 21 × 2 = 42 matchdays (462 matches total,
 confirmed against the 22 × 21 real-data expectation)."""
 
-RECENT_WINDOW_ROUNDS_FORWARD = 1
-"""[1, current_round + 1]: the *whole* season so far, not just a narrow
+RECENT_WINDOW_ROUNDS_FORWARD = 3
+"""[1, current_round + 3]: the *whole* season so far, not just a narrow
 recent slice. Real bug found live: windowing to [current_round - 3,
 current_round + 1] meant any round that fell more than 3 matchdays
 behind the current one (e.g. September results by late October) never
@@ -340,10 +340,14 @@ past that point too (verified live: up to several weeks) — so those
 real results were lost for good and showed as blank/unknown. Fetching
 every round from 1 sounds expensive, but it isn't in practice: each
 individual round is now cached essentially forever once finished, and
-persisted to disk (see thesportsdb._fetch_one_round), so only the
-handful of rounds since the last fetch ever actually hits the network —
-the full backfill only has a real cost once, the first time a
-competition is ever fetched."""
+the forward slice was widened from +1 to +3 (2026-11-01, live symptom:
+most upcoming fixtures showed OpenFootball's 00:00 UTC placeholder
+kickoff instead of the real broadcast time even for next weekend's
+round) so real kickoff times reach the next 2-3 matchdays, not just
+the very next one, at the cost of only a couple of extra per-round
+requests per competition per refresh cycle — still cheap next to a
+whole-season backfill, which only has a real cost once, the first
+time a competition is ever fetched."""
 
 _OPENFOOTBALL_SLUGS = {
     "laliga",

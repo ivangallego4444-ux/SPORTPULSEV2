@@ -273,8 +273,8 @@ def test_matches_endpoint_merges_thesportsdbs_recent_window_into_the_full_season
         with TestClient(app) as client:
             resp = client.get("/api/competitions/laliga/matches")
 
-    # current_round=3, back=3, forward=1 -> rounds [1,2,3,4].
-    assert requested_rounds == ["1", "2", "3", "4"]
+    # current_round=3, forward=3 -> rounds [1,2,3,4,5,6].
+    assert requested_rounds == ["1", "2", "3", "4", "5", "6"]
     assert resp.status_code == 200
     body = resp.json()
     # 10 real fixtures overwritten with TheSportsDB's real result
@@ -354,10 +354,11 @@ def test_matches_endpoint_prefers_the_more_advanced_of_the_two_round_discovery_s
             client.get("/api/competitions/laliga/matches")
 
     # If round 2 (TheSportsDB's stale answer) had won, the window would
-    # be [1,2,3]. Round 6 (OpenFootball's schedule-based estimate) wins
-    # instead, giving window [1..7] — every round of the season so far
-    # (see RECENT_WINDOW_ROUNDS_FORWARD), not just a narrow recent slice.
-    assert requested_rounds == ["1", "2", "3", "4", "5", "6", "7"]
+    # be [1,2,3,4,5]. Round 6 (OpenFootball's schedule-based estimate)
+    # wins instead, giving window [1..9] — every round of the season so
+    # far plus the forward slice (see RECENT_WINDOW_ROUNDS_FORWARD), not
+    # just a narrow recent slice.
+    assert requested_rounds == ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
 
 
 def test_matches_endpoint_never_overwrites_a_real_result_with_a_still_scheduled_one():
