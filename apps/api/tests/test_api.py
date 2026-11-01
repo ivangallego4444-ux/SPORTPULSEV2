@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import pathlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -14,6 +14,7 @@ import respx
 from fastapi.testclient import TestClient
 
 from app.main import _snapshot, app, openfootball_provider, thesportsdb_provider
+from sp_providers import thesportsdb as thesportsdb_module
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 
@@ -24,6 +25,15 @@ def load(name: str):
 
 def today_iso() -> str:
     return datetime.now(timezone.utc).date().isoformat()
+
+
+def future_iso(days: int) -> str:
+    """A date `days` from today — for a fixture that must always be a
+    real future (scheduled) match, never a hardcoded date that quietly
+    becomes the past as real time moves on (see a real test break found
+    live: a fixture hardcoded to "2026-10-25" started reporting the match
+    as finished instead of scheduled once the real date passed 2026-10-25)."""
+    return (datetime.now(timezone.utc).date() + timedelta(days=days)).isoformat()
 
 
 @pytest.fixture(autouse=True)
@@ -47,6 +57,17 @@ def _reset_shared_provider_caches():
     thesportsdb_provider.cache._store.clear()
     thesportsdb_provider.cache._known_good.clear()
     openfootball_provider.cache._store.clear()
+    # Same leakage risk as _known_good_store_path above, for the newer
+    # crest/badge harvest (see thesportsdb.configure_crest_store): without
+    # this, fixture team names like "A"/"B" would get written into the
+    # real apps/api/.crest_store.json, and a real crest learned by an
+    # earlier test would leak into a later one's assertions.
+    real_crest_path = thesportsdb_module._CRESTS_STORE_PATH
+    thesportsdb_module._CRESTS_STORE_PATH = None
+    real_league_badges = dict(thesportsdb_module._LEAGUE_BADGES)
+    real_team_crests = dict(thesportsdb_module._TEAM_CRESTS)
+    thesportsdb_module._LEAGUE_BADGES.clear()
+    thesportsdb_module._TEAM_CRESTS.clear()
     # Same leakage risk as the provider caches above, for the newer
     # in-memory `_snapshot` (see main.py): SPORTPULSE_DISABLE_BACKGROUND_REFRESH
     # keeps the background loops from ever running during tests, but the
@@ -62,6 +83,11 @@ def _reset_shared_provider_caches():
     _snapshot.sos_by_sport.clear()
     yield
     thesportsdb_provider._known_good_store_path = real_path
+    thesportsdb_module._CRESTS_STORE_PATH = real_crest_path
+    thesportsdb_module._LEAGUE_BADGES.clear()
+    thesportsdb_module._LEAGUE_BADGES.update(real_league_badges)
+    thesportsdb_module._TEAM_CRESTS.clear()
+    thesportsdb_module._TEAM_CRESTS.update(real_team_crests)
 
 
 def test_list_sports_only_includes_verified_ones():
@@ -233,10 +259,11 @@ def test_matches_endpoint_merges_thesportsdbs_recent_window_into_the_full_season
         ("Barcelona", "Athletic Bilbao"),
         ("Celta Vigo", "Osasuna"),
     ]
+    future_date = future_iso(30)
     full_season = {
         "matches": (
             [{"date": "2026-08-10", "team1": h, "team2": a} for h, a in real_pairings]  # no score yet
-            + [{"date": "2026-11-01", "team1": f"Future{i}", "team2": f"Team{i}"} for i in range(5)]
+            + [{"date": future_date, "team1": f"Future{i}", "team2": f"Team{i}"} for i in range(5)]
         )
     }
     requested_rounds: list[str] = []
@@ -283,7 +310,7 @@ def test_matches_endpoint_never_shows_a_past_dated_match_as_still_scheduled():
     full_season = {
         "matches": [
             {"date": "2020-01-01", "team1": "A", "team2": "B"},  # long past, still "scheduled"
-            {"date": "2026-11-01", "team1": "C", "team2": "D"},  # genuinely future
+            {"date": future_iso(30), "team1": "C", "team2": "D"},  # genuinely future
         ]
     }
     with respx.mock:
@@ -356,8 +383,8 @@ def test_matches_endpoint_never_overwrites_a_real_result_with_a_still_scheduled_
                 "intHomeScore": None,
                 "intAwayScore": None,
                 "strStatus": "NS",
-                "dateEvent": "2026-12-01",
-                "strTimestamp": "2026-12-01T20:00:00",
+                "dateEvent": future_iso(60),
+                "strTimestamp": f"{future_iso(60)}T20:00:00",
             }
         ]
     }
@@ -396,6 +423,7 @@ def test_matches_endpoint_prefers_thesportsdbs_real_kickoff_time_for_a_still_sch
     # scheduled entry in the current round window has the real,
     # TV-confirmed day/time — it should win even though neither side has
     # a score yet.
+    future_date = future_iso(5)
     discovery_data = {"events": [{"idEvent": "1", "strEvent": "X vs Y", "intRound": "1"}]}
     thesportsdb_data = {
         "events": [
@@ -407,14 +435,14 @@ def test_matches_endpoint_prefers_thesportsdbs_real_kickoff_time_for_a_still_sch
                 "intHomeScore": None,
                 "intAwayScore": None,
                 "strStatus": "NS",
-                "dateEvent": "2026-10-25",
-                "strTimestamp": "2026-10-25T20:00:00",
+                "dateEvent": future_date,
+                "strTimestamp": f"{future_date}T20:00:00",
             }
         ]
     }
     full_season = {
         "matches": [
-            {"date": "2026-10-25", "team1": "Barcelona", "team2": "Real Madrid"}  # no time, no score
+            {"date": future_date, "team1": "Barcelona", "team2": "Real Madrid"}  # no time, no score
         ]
     }
     with respx.mock:
@@ -432,7 +460,7 @@ def test_matches_endpoint_prefers_thesportsdbs_real_kickoff_time_for_a_still_sch
     assert len(body["matches"]) == 1
     assert body["matches"][0]["status"] == "scheduled"
     assert body["matches"][0]["source"] == "thesportsdb"
-    assert body["matches"][0]["kickoff"] == "2026-10-25T20:00:00Z"
+    assert body["matches"][0]["kickoff"] == f"{future_date}T20:00:00Z"
 
 
 def test_standings_endpoint_serves_the_computed_table_not_the_5_row_capped_one():

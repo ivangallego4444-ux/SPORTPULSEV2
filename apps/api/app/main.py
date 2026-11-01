@@ -26,7 +26,15 @@ from sp_predict.poisson import _collect_stats, _dynamic_season_ratings, _sos_cor
 from sp_providers.openfootball import OpenFootballProvider
 from sp_providers.openligadb import OpenLigaDBProvider
 from sp_providers.registry import ALL_COMPETITIONS, SPORTS, competitions_for_sport
-from sp_providers.thesportsdb import ROUND_BASED_SLUGS, TheSportsDBProvider, current_season, get_league_badge
+from sp_providers.thesportsdb import (
+    ROUND_BASED_SLUGS,
+    TheSportsDBProvider,
+    configure_crest_store,
+    current_season,
+    get_league_badge,
+    get_team_crest,
+    remember_team_crest,
+)
 
 from . import teams as teams_module
 from .highlights import build_home_highlights
@@ -40,6 +48,13 @@ _KNOWN_GOOD_STORE_PATH = Path(__file__).resolve().parent.parent / ".cache_store.
 
 openligadb_provider = OpenLigaDBProvider()
 thesportsdb_provider = TheSportsDBProvider(known_good_store_path=_KNOWN_GOOD_STORE_PATH)
+# Same persist-across-restarts reasoning as _KNOWN_GOOD_STORE_PATH above,
+# for the separate team-crest/league-badge harvest (see
+# sp_providers.thesportsdb's _CRESTS_STORE_PATH docstring): without this,
+# every restart wiped every crest ever learned, so coverage depended
+# entirely on this one process's own lucky TheSportsDB fetches instead of
+# accumulating for good.
+configure_crest_store(Path(__file__).resolve().parent.parent / ".crest_store.json")
 openfootball_provider = OpenFootballProvider()
 
 _BACKGROUND_REFRESH_ENABLED = os.environ.get("SPORTPULSE_DISABLE_BACKGROUND_REFRESH") != "1"
@@ -412,7 +427,46 @@ def _demote_stale_scheduled_matches(matches: list[Match]) -> list[Match]:
 async def _fetch_matches(client: httpx.AsyncClient, slug: str) -> list[Match]:
     matches = await _fetch_matches_raw(client, slug)
     matches = await _overlay_live_matches(client, slug, matches)
+    matches = _backfill_team_crests(matches)
     return _demote_stale_scheduled_matches(matches)
+
+
+def _backfill_team_crests(matches: list[Match]) -> list[Match]:
+    """Real bug found live: most of a hybrid competition's matches come
+    from OpenFootball, which never gives a crest at all (see
+    openfootball.py) — only the narrow recent TheSportsDB window did,
+    leaving most teams with no badge on screen.
+
+    Second real bug found live, in this fix's own first version: relying
+    solely on thesportsdb.get_team_crest (populated as a side effect
+    inside _map_event) silently did nothing for a team whose only
+    TheSportsDB-sourced match this run came from the known-good *disk*
+    cache — a deserialized Match object already has its own real crest,
+    but loading it never re-runs _map_event, so that side effect dict
+    never saw it. Harvesting directly from whichever matches are already
+    in this exact list first (every real crest already present, whatever
+    its source) fixes that: it needs no side-effect dict and no network
+    call, just matches this request already has in hand. The global
+    thesportsdb harvest is kept as a secondary source, for a team that
+    only appears in a *different* competition's matches (e.g. seen in the
+    Champions League this run, but not in LaLiga's own)."""
+    harvested: dict[str, str] = {}
+    for m in matches:
+        if m.home and m.home_crest and m.home not in harvested:
+            harvested[m.home] = m.home_crest
+            remember_team_crest(m.home, m.home_crest)
+        if m.away and m.away_crest and m.away not in harvested:
+            harvested[m.away] = m.away_crest
+            remember_team_crest(m.away, m.away_crest)
+
+    updated: list[Match] = []
+    for m in matches:
+        home_crest = m.home_crest or (harvested.get(m.home) or get_team_crest(m.home) if m.home else None)
+        away_crest = m.away_crest or (harvested.get(m.away) or get_team_crest(m.away) if m.away else None)
+        if home_crest != m.home_crest or away_crest != m.away_crest:
+            m = m.model_copy(update={"home_crest": home_crest, "away_crest": away_crest})
+        updated.append(m)
+    return updated
 
 
 async def _overlay_live_matches(client: httpx.AsyncClient, slug: str, matches: list[Match]) -> list[Match]:

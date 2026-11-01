@@ -207,6 +207,80 @@ def get_league_badge(competition_slug: str) -> str | None:
     return _LEAGUE_BADGES.get(competition_slug)
 
 
+_TEAM_CRESTS: dict[str, str] = {}
+"""Real team crests, harvested for free the same way as _LEAGUE_BADGES —
+from `strHomeTeamBadge`/`strAwayTeamBadge`, already present on every
+structured event TheSportsDB returns. Exists because the hybrid OpenFootball
++ TheSportsDB merge (see apps/api/app/main.py's _OPENFOOTBALL_SLUGS) means
+most of a competition's real matches come from OpenFootball, which gives
+no crest at all (see openfootball.py) — real bug found live: ~380 of 381
+LaLiga matches had no crest, because only the narrow recent TheSportsDB
+window ever carried one. `lookup_all_teams.php` (which would have given
+every team's crest in one request) was tried and found to return the
+wrong league's teams regardless of the id passed — broken on the free
+tier, not a wrong id. Harvesting one crest per team name as a side effect
+of matches already being fetched needs no extra request and — given
+enough real matches seen — eventually covers every team."""
+
+_CRESTS_STORE_PATH: Path | None = None
+"""Real bug found live: _LEAGUE_BADGES/_TEAM_CRESTS are harvested for free
+but were in-memory only, so every single backend restart wiped every crest
+ever learned — a team whose only real-crest sighting came from a round
+TheSportsDB happened to serve three restarts ago went right back to no
+crest, even though the known-good *match* cache (a separate store) still
+remembered that round's matches fine. Persisting these two small dicts the
+same way (see configure_crest_store) makes a learned crest permanent:
+coverage only ever grows across restarts instead of resetting to whatever
+this one process's lucky rate-limit window happened to see."""
+
+
+def configure_crest_store(path: Path) -> None:
+    """Call once at startup (see apps/api/app/main.py) to load any crests
+    already learned in a previous process, and persist every new one from
+    here on. Never called in tests — stays in-memory-only there, same as
+    before."""
+    global _CRESTS_STORE_PATH
+    _CRESTS_STORE_PATH = path
+    if not path.exists():
+        return
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    _LEAGUE_BADGES.update(raw.get("league_badges") or {})
+    _TEAM_CRESTS.update(raw.get("team_crests") or {})
+
+
+def _persist_crest_store() -> None:
+    if _CRESTS_STORE_PATH is None:
+        return
+    try:
+        _CRESTS_STORE_PATH.write_text(
+            json.dumps({"league_badges": _LEAGUE_BADGES, "team_crests": _TEAM_CRESTS}),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass  # Disk persistence is a nice-to-have; never break a request over it.
+
+
+def get_team_crest(team_name: str) -> str | None:
+    return _TEAM_CRESTS.get(team_name)
+
+
+def remember_team_crest(team_name: str, crest_url: str) -> None:
+    """Lets a caller (apps/api/app/main.py's _backfill_team_crests) feed a
+    real crest back into this same harvest — e.g. one found on a Match
+    object loaded from the known-good *disk* cache, which never runs
+    _map_event and so never populates this dict on its own. Once
+    remembered here, every other competition's backfill this process
+    serves afterwards benefits too (a team seen in the Champions League
+    helps backfill it in LaLiga, and vice versa)."""
+    if team_name in _TEAM_CRESTS:
+        return
+    _TEAM_CRESTS[team_name] = crest_url
+    _persist_crest_store()
+
+
 _PLAYER_HEADSHOTS: dict[str, str] = {}
 """Real player photos, looked up once per real surname (see
 TheSportsDBProvider.enrich_player_headshots) via searchplayers.php and
@@ -244,8 +318,10 @@ def _map_event(raw: dict, competition_slug: str, config: _LeagueConfig) -> Match
     sport = COMPETITIONS[competition_slug].sport
 
     badge = raw.get("strLeagueBadge")
+    learned_something = False
     if badge and competition_slug not in _LEAGUE_BADGES:
         _LEAGUE_BADGES[competition_slug] = badge
+        learned_something = True
 
     if config.structured:
         home = raw.get("strHomeTeam")
@@ -254,6 +330,14 @@ def _map_event(raw: dict, competition_slug: str, config: _LeagueConfig) -> Match
         away_id = raw.get("idAwayTeam")
         home_crest = raw.get("strHomeTeamBadge")
         away_crest = raw.get("strAwayTeamBadge")
+        if home and home_crest and _TEAM_CRESTS.get(home) != home_crest:
+            _TEAM_CRESTS[home] = home_crest
+            learned_something = True
+        if away and away_crest and _TEAM_CRESTS.get(away) != away_crest:
+            _TEAM_CRESTS[away] = away_crest
+            learned_something = True
+        if learned_something:
+            _persist_crest_store()
         home_score_raw = raw.get("intHomeScore")
         away_score_raw = raw.get("intAwayScore")
         home_score = int(home_score_raw) if home_score_raw not in (None, "") else None
