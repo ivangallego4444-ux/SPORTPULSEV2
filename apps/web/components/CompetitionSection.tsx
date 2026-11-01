@@ -82,22 +82,31 @@ export default function CompetitionSection({ slug }: { slug: string }) {
       <EmptyState
         tone="error"
         title="No se ha podido conectar con la API"
-        description={error ?? "Comprueba que apps/api esté en marcha en el puerto 8010."}
+        description={error ?? "Comprueba que apps/api esté en marcha y que NEXT_PUBLIC_API_URL apunte a su puerto real."}
       />
     );
   }
 
-  const now = Date.now();
-
-  // Strict rule: a match whose kickoff has already passed is never shown
-  // as "próximo", no matter what the source still calls its status (a
-  // stale OpenFootball entry can stay "scheduled" for weeks — see
-  // _demote_stale_scheduled_matches in apps/api, which already relabels
-  // most of these "unknown", but this is a second, independent guard on
-  // the display side).
+  // Real bug found live: OpenFootball gives a real match date but no real
+  // kick-off time for anything beyond its own stale snapshot — those
+  // fixtures carry a midnight-UTC placeholder (see apps/api/app/main.py's
+  // _merge_matches_by_identity), not the real evening kick-off. Comparing
+  // that placeholder against the exact current instant (`Date.now()`)
+  // meant every match scheduled for *today* silently vanished from
+  // "próximos partidos" the moment it ticked past midnight UTC — hours
+  // before the real match had actually been played — jumping straight to
+  // next week's round instead. Comparing by UTC calendar date instead
+  // (same granularity apps/api's own _demote_stale_scheduled_matches
+  // already uses to decide what's stale) keeps a match "upcoming" for its
+  // whole real-world day, placeholder time or not.
+  const startOfTodayUTC = Date.UTC(
+    new Date().getUTCFullYear(),
+    new Date().getUTCMonth(),
+    new Date().getUTCDate()
+  );
   const upcomingSorted = matches
     .filter((m) => (m.status === "scheduled" || m.status === "live") && m.kickoff !== null)
-    .filter((m) => new Date(m.kickoff as string).getTime() >= now)
+    .filter((m) => new Date(m.kickoff as string).getTime() >= startOfTodayUTC)
     .sort((a, b) => new Date(a.kickoff as string).getTime() - new Date(b.kickoff as string).getTime());
 
   // "La próxima jornada completa": every upcoming match within 4 days of

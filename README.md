@@ -102,11 +102,15 @@ cd SportPulse-v2
 python -m venv .venv
 ./.venv/Scripts/pip install -r apps/api/requirements.txt
 cd apps/api
-../../.venv/Scripts/python -m uvicorn app.main:app --port 8010
+../../.venv/Scripts/python -m uvicorn app.main:app --port 8020
 ```
 
-Queda escuchando en `http://127.0.0.1:8010`. Prueba rápida:
-`curl http://127.0.0.1:8010/api/sports`.
+Queda escuchando en `http://127.0.0.1:8020`. Prueba rápida:
+`curl http://127.0.0.1:8020/api/sports`.
+
+Importante: `apps/web/.env.local` debe apuntar `NEXT_PUBLIC_API_URL` a
+este mismo puerto — si no coinciden, el frontend falla en silencio (o
+se queda con datos antiguos de caché) sin avisar claramente.
 
 ### 2. Frontend (web)
 
@@ -118,13 +122,14 @@ npm install
 npm run dev
 ```
 
-Abre **http://localhost:3100** (puerto 3100 a propósito: el 3000 ya lo usa
-el proyecto original en este equipo).
+Abre **http://localhost:3120** (puerto 3120 a propósito: el 3000 ya lo usa
+el proyecto original en este equipo, y el 3100 puede chocar con otros
+procesos de node ya corriendo).
 
 > Nota: en esta sesión ambos procesos se dejaron corriendo en segundo
-> plano tras verificarlos (API en 8010, web en 3100) — puedes abrir esa
+> plano tras verificarlos (API en 8020, web en 3120) — puedes abrir esa
 > URL directamente. Para pararlos: busca el proceso que escucha en ese
-> puerto y termínalo (en Windows: `Get-NetTCPConnection -LocalPort 3100 |
+> puerto y termínalo (en Windows: `Get-NetTCPConnection -LocalPort 3120 |
 > Select OwningProcess` y `Stop-Process -Id <pid>`).
 
 ## Pruebas automáticas (ejecutadas, no solo escritas)
