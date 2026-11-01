@@ -182,16 +182,26 @@ def _parse_timestamp(raw: dict) -> datetime | None:
     return None
 
 
-def _infer_status(raw: dict, kickoff: datetime | None) -> MatchStatus:
+def _infer_status(raw: dict, kickoff: datetime | None, has_result: bool) -> MatchStatus:
+    """`has_result` is True when real evidence of a result exists — a
+    numeric score (football/basketball) or non-empty `strResult` text
+    (tennis). Real bug found live: a kickoff that had merely passed used
+    to be treated as proof the match was over, which fabricated
+    "finished" matches with no score at all for a same-day NBA fixture
+    TheSportsDB simply hadn't updated yet (`strStatus: "NS"`,
+    intHomeScore/intAwayScore both null) — a blank result card, not a
+    real one. A passed kickoff with no real result now stays SCHEDULED;
+    apps/api/app/main.py's own staleness pass already relabels a
+    SCHEDULED match UNKNOWN once its kickoff is clearly in the past, so
+    nothing here needs to guess at "finished" without real data for
+    that case."""
     str_status = (raw.get("strStatus") or "").upper()
-    if str_status in {"FT", "AOT", "AP"}:
+    if str_status in {"FT", "AOT", "AP"} or has_result:
         return MatchStatus.FINISHED
     if str_status in {"NS", "", None}:
         if kickoff is None:
             return MatchStatus.UNKNOWN
-        now = datetime.now(timezone.utc)
-        kickoff_cmp = kickoff if kickoff.tzinfo else kickoff.replace(tzinfo=timezone.utc)
-        return MatchStatus.SCHEDULED if kickoff_cmp >= now else MatchStatus.FINISHED
+        return MatchStatus.SCHEDULED
     return MatchStatus.UNKNOWN
 
 
@@ -314,8 +324,21 @@ def _parse_tennis_players(raw: dict) -> tuple[str | None, str | None]:
 
 def _map_event(raw: dict, competition_slug: str, config: _LeagueConfig) -> Match:
     kickoff = _parse_timestamp(raw)
-    status = _infer_status(raw, kickoff)
     sport = COMPETITIONS[competition_slug].sport
+    if config.structured:
+        has_result = raw.get("intHomeScore") not in (None, "") and raw.get("intAwayScore") not in (
+            None,
+            "",
+        )
+    else:
+        # Tennis has no numeric score fields at all — `strResult` (e.g.
+        # "Musetti beat Fritz 2-0...") is the real evidence a match is
+        # over. `strDescriptionEN` is NOT a substitute: it's populated
+        # with the tournament/player line before the match is played too
+        # (see _parse_tennis_players), so it says nothing about whether
+        # it's finished.
+        has_result = bool((raw.get("strResult") or "").strip())
+    status = _infer_status(raw, kickoff, has_result)
 
     badge = raw.get("strLeagueBadge")
     learned_something = False
@@ -380,6 +403,20 @@ def _map_event(raw: dict, competition_slug: str, config: _LeagueConfig) -> Match
         venue=raw.get("strVenue"),
         source=SOURCE,
     )
+
+
+def _map_events(events: list[dict], competition_slug: str, config: _LeagueConfig) -> list[Match]:
+    """Real bug found live (ATP): most of eventsseason.php's events for a
+    tour have no `strDescriptionEN` at all (only `strEvent`, which mixes
+    the tournament name into the same string with no reliable separator
+    — see _parse_tennis_players's own docstring), so _parse_tennis_players
+    correctly refuses to guess and returns (None, None). Mapping those
+    anyway produced real "finished" matches with no team names and no
+    score — blank cards, not a real result. A match with no identifiable
+    side on either end carries no usable information in any sport, so it
+    never becomes a Match at all rather than a Match full of nulls."""
+    mapped = (_map_event(raw, competition_slug, config) for raw in events)
+    return [m for m in mapped if m.home or m.away]
 
 
 _TWO_YEAR_SEASON_SLUGS = {
@@ -468,9 +505,19 @@ class TheSportsDBProvider:
         # at 0.35s (a ~3.5s burst) tripped the free key's burst limit on
         # the last round almost every single time, even with no other
         # process touching the key — the limit is evidently about burst
-        # density, not just the nominal ~30 req/min. Spreading the same
-        # 11 requests over ~11s instead avoided it in the same live test.
-        self.throttle = throttle or Throttle(min_interval_seconds=1.0)
+        # density, not just the nominal ~30 req/min.
+        #
+        # Bumped again from 1.0s to 1.5s real bug found live: fetching a
+        # whole season's rounds from round 1 instead of a narrow window
+        # (see apps/api/app/main.py's RECENT_WINDOW_ROUNDS_FORWARD) raised
+        # the real sustained request volume for a full cold backfill
+        # across every round-based competition well past what 1.0s (a
+        # steady 60 req/min) could clear — 1.5s keeps the *sustained* rate
+        # under the documented ~30-40 req/min nominal limit instead of
+        # just the burst shape. A one-time cost: every round this pays for
+        # is persisted to disk once finished (see _fetch_one_round), so
+        # only a handful of genuinely new rounds ever pay it again.
+        self.throttle = throttle or Throttle(min_interval_seconds=1.5)
         # Optional: persists the known-good cache to a local JSON file so
         # a real, already-successful fetch survives a process restart —
         # found live that restarting the verification backend to pick up
@@ -491,8 +538,18 @@ class TheSportsDBProvider:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return
+        # Real bug found live: a disk-persisted entry is served as-is,
+        # never re-run through _map_events's filtering (see its
+        # docstring) — so a garbage no-team match saved to disk *before*
+        # that filter existed (captured live: 15 of 16 ATP events with
+        # neither player identifiable) kept resurfacing as a blank
+        # "finished" card on every restart forever, immune to a filter
+        # that only runs at fetch time. Applying the same rule here too
+        # means a bad entry already on disk heals itself the next time
+        # this file is loaded, not just the next time it's fetched fresh.
         restored = {
-            key: [Match.model_validate(m) for m in matches_raw] for key, matches_raw in raw.items()
+            key: [m for m in (Match.model_validate(raw_m) for raw_m in matches_raw) if m.home or m.away]
+            for key, matches_raw in raw.items()
         }
         self.cache.import_known_good(restored)
 
@@ -521,7 +578,7 @@ class TheSportsDBProvider:
             client, f"{BASE_URL}/eventsnextleague.php", params={"id": config.league_id}
         )
         events = (data or {}).get("events") or []
-        matches = [_map_event(raw, competition_slug, config) for raw in events]
+        matches = _map_events(events, competition_slug, config)
         # Don't lock in a rate-limited "nothing came back" for the full
         # TTL — a short retry window lets the next request self-heal once
         # the free key's burst limit clears (verified live: it does,
@@ -544,12 +601,37 @@ class TheSportsDBProvider:
         FINISHED_ROUND_TTL) — a finished round's real result never
         changes, so re-fetching it on every request wastes a slot of the
         free key's burst budget for nothing. A round still in progress or
-        upcoming keeps the old short TTL, so it's re-checked often."""
+        upcoming keeps the old short TTL, so it's re-checked often.
+
+        Real bug found live: that FINISHED_ROUND_TTL cache was in-memory
+        only, so a round finished weeks ago — whose real result was
+        already fully known — went right back to being re-fetched (and,
+        under rate limiting, came back empty) after every single backend
+        restart. A finished round's result is persisted to disk the same
+        way the known-good match cache already is, and a round that fails
+        to fetch live now falls back to that disk-backed copy instead of
+        silently returning nothing — a competition's older real results
+        never regress to blank just because today's narrow attempt got
+        rate-limited."""
         config = _LEAGUES[competition_slug]
         cache_key = f"thesportsdb:round:{competition_slug}:{season}:{round_number}"
         cached = self.cache.get(cache_key)
         if cached is not None:
             return cached, True
+
+        # A restart wipes the in-memory TTL cache above, but not the
+        # disk-backed known-good one — and a round already known to be
+        # *all finished* can never change, so there's no reason to spend
+        # a network request re-confirming it. Real bug found live:
+        # without this, backfilling a whole season's worth of rounds (see
+        # RECENT_WINDOW_ROUNDS_FORWARD) meant a burst of one live request
+        # per round on *every* restart, even for rounds finished weeks
+        # ago — exactly the kind of burst that trips the free key's rate
+        # limit, defeating the whole point of persisting them.
+        known_good = self.cache.get_known_good(cache_key)
+        if known_good and all(m.status == MatchStatus.FINISHED for m in known_good):
+            self.cache.set(cache_key, known_good, ttl_seconds=FINISHED_ROUND_TTL)
+            return known_good, True
 
         await self.throttle.wait()
         data = await fetch_json(
@@ -558,12 +640,27 @@ class TheSportsDBProvider:
             params={"id": config.league_id, "r": round_number, "s": season},
         )
         if data is None:
+            known_good = self.cache.get_known_good(cache_key)
+            if known_good is not None:
+                return known_good, True
             return None, False
 
         events = data.get("events") or []
-        matches = [_map_event(raw, competition_slug, config) for raw in events]
+        matches = _map_events(events, competition_slug, config)
         all_finished = bool(matches) and all(m.status == MatchStatus.FINISHED for m in matches)
         self.cache.set(cache_key, matches, ttl_seconds=FINISHED_ROUND_TTL if all_finished else 20)
+        if all_finished:
+            self._remember_known_good(cache_key, matches)
+            return matches, True
+        if not matches:
+            # A genuinely empty round this attempt (not a fetch failure —
+            # data came back, there's just nothing in it yet) — the same
+            # "never regress" rule as everywhere else: prefer whatever
+            # this round's disk-backed copy already had over a fresh
+            # empty one.
+            known_good = self.cache.get_known_good(cache_key)
+            if known_good:
+                return known_good, True
         return matches, True
 
     async def _aggregate_rounds(
@@ -707,7 +804,7 @@ class TheSportsDBProvider:
             params={"id": config.league_id, "s": season},
         )
         events = (data or {}).get("events") or []
-        matches = [_map_event(raw, competition_slug, config) for raw in events]
+        matches = _map_events(events, competition_slug, config)
         matches.sort(key=lambda m: m.kickoff or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
         self.cache.set(cache_key, matches, ttl_seconds=300 if matches else 20)
         if matches:
@@ -737,7 +834,7 @@ class TheSportsDBProvider:
             client, f"{BASE_URL}/eventspastleague.php", params={"id": config.league_id}
         )
         events = (data or {}).get("events") or []
-        matches = [_map_event(raw, competition_slug, config) for raw in events]
+        matches = _map_events(events, competition_slug, config)
         self.cache.set(cache_key, matches, ttl_seconds=300 if matches else 20)
         if matches:
             self._remember_known_good(cache_key, matches)

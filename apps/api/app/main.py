@@ -325,11 +325,20 @@ SEGUNDA_ROUNDS = 42
 """22 teams, double round-robin: 21 × 2 = 42 matchdays (462 matches total,
 confirmed against the 22 × 21 real-data expectation)."""
 
-RECENT_WINDOW_ROUNDS_BACK = 3
 RECENT_WINDOW_ROUNDS_FORWARD = 1
-"""[current_round - 3, current_round + 1]: wide enough to reach back past
-OpenFootball's real staleness (verified live: as much as ~4 matchdays
-behind) and one round into real upcoming fixtures."""
+"""[1, current_round + 1]: the *whole* season so far, not just a narrow
+recent slice. Real bug found live: windowing to [current_round - 3,
+current_round + 1] meant any round that fell more than 3 matchdays
+behind the current one (e.g. September results by late October) never
+got fetched again by anything — OpenFootball's own file is stale well
+past that point too (verified live: up to several weeks) — so those
+real results were lost for good and showed as blank/unknown. Fetching
+every round from 1 sounds expensive, but it isn't in practice: each
+individual round is now cached essentially forever once finished, and
+persisted to disk (see thesportsdb._fetch_one_round), so only the
+handful of rounds since the last fetch ever actually hits the network —
+the full backfill only has a real cost once, the first time a
+competition is ever fetched."""
 
 _OPENFOOTBALL_SLUGS = {
     "laliga",
@@ -651,10 +660,7 @@ async def _fetch_matches_raw(client: httpx.AsyncClient, slug: str) -> list[Match
         current_round = max((r for r in (discovered_round, estimated_round) if r), default=None)
 
         if current_round:
-            window = range(
-                max(1, current_round - RECENT_WINDOW_ROUNDS_BACK),
-                current_round + RECENT_WINDOW_ROUNDS_FORWARD + 1,
-            )
+            window = range(1, current_round + RECENT_WINDOW_ROUNDS_FORWARD + 1)
             recent = await thesportsdb_provider.get_recent_rounds(client, slug, season, window)
         else:
             # Both discovery signals failed — fall back to the old

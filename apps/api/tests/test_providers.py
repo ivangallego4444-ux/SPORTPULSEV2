@@ -93,10 +93,15 @@ async def test_thesportsdb_nba_structured_matches_map_real_fixture():
 
 
 @pytest.mark.asyncio
-async def test_thesportsdb_tennis_never_fabricates_a_score_split():
-    # Tennis events on this source have no structured home/away/score
-    # fields — only free text. Confirm we surface that honestly (None,
-    # not a guessed number) and keep the real title/result text instead.
+async def test_thesportsdb_tennis_drops_events_with_no_identifiable_players():
+    # Real bug found live: this exact captured fixture — eventsseason.php
+    # for ATP — has no `strDescriptionEN` on any of its 15 events (only
+    # `strEvent`, which mixes the tournament name into the player names
+    # with no reliable separator), so none of them can be honestly
+    # parsed into real player names. Mapping them anyway produced 15
+    # "finished" matches with no team names and no score at all — blank
+    # cards. A match with nothing identifiable on either side is dropped
+    # entirely rather than surfaced as a Match full of nulls.
     data = load("thesportsdb_atp_season.json")
     with respx.mock:
         respx.get(url__regex=r".*eventsseason\.php.*").mock(
@@ -105,13 +110,40 @@ async def test_thesportsdb_tennis_never_fabricates_a_score_split():
         async with httpx.AsyncClient() as client:
             matches = await TheSportsDBProvider().get_recent(client, "atp", "2026")
 
-    assert len(matches) == len(data["events"])
-    for match in matches:
-        assert match.home is None
-        assert match.away is None
-        assert match.home_score is None
-        assert match.away_score is None
-        assert match.title  # raw event title kept for display
+    assert matches == []
+
+
+@pytest.mark.asyncio
+async def test_thesportsdb_tennis_never_fabricates_a_score_split():
+    # A real, parseable tennis event (strDescriptionEN's last line is
+    # "Player1 vs Player2") still never gets a guessed numeric score —
+    # tennis has no structured score fields on this source, only free
+    # text (strResult), which is kept as-is for display.
+    raw_event = {
+        "idEvent": "1",
+        "strEvent": "Lyon Open Fritz vs Musetti",
+        "strDescriptionEN": "Lyon Open - Lyon - The Final\r\nFritz (14) vs Musetti (26)",
+        "strResult": "Musetti beat Fritz 2-0\r\nMusetti : 6 6\r\nFritz : 3 4",
+        "strStatus": "",
+        "dateEvent": "2026-10-25",
+        "strTimestamp": "2026-10-25T00:00:00",
+    }
+    data = {"events": [raw_event]}
+    with respx.mock:
+        respx.get(url__regex=r".*eventsseason\.php.*").mock(
+            return_value=httpx.Response(200, json=data)
+        )
+        async with httpx.AsyncClient() as client:
+            matches = await TheSportsDBProvider().get_recent(client, "atp", "2026")
+
+    assert len(matches) == 1
+    match = matches[0]
+    assert match.home == "Fritz"
+    assert match.away == "Musetti"
+    assert match.home_score is None
+    assert match.away_score is None
+    assert match.status == MatchStatus.FINISHED  # real strResult text is evidence enough
+    assert match.title  # raw event title kept for display
 
 
 @pytest.mark.asyncio

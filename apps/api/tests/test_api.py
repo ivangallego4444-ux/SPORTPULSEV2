@@ -363,8 +363,9 @@ def test_matches_endpoint_prefers_the_more_advanced_of_the_two_round_discovery_s
 
     # If round 2 (TheSportsDB's stale answer) had won, the window would
     # be [1,2,3]. Round 6 (OpenFootball's schedule-based estimate) wins
-    # instead, giving window [3,4,5,6,7].
-    assert requested_rounds == ["3", "4", "5", "6", "7"]
+    # instead, giving window [1..7] — every round of the season so far
+    # (see RECENT_WINDOW_ROUNDS_FORWARD), not just a narrow recent slice.
+    assert requested_rounds == ["1", "2", "3", "4", "5", "6", "7"]
 
 
 def test_matches_endpoint_never_overwrites_a_real_result_with_a_still_scheduled_one():
