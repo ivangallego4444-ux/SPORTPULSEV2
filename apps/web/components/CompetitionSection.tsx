@@ -125,9 +125,19 @@ export default function CompetitionSection({ slug }: { slug: string }) {
           .slice(0, 20);
 
   // "Las últimas 2 jornadas": every finished match within 10 days of the
-  // most recent one.
+  // most recent one. Real bug found live: a match whose kickoff has
+  // already passed but whose real result hasn't reached either free
+  // source yet is correctly marked "unknown" by the API (never a
+  // fabricated score — see apps/api's _demote_stale_scheduled_matches),
+  // but this section used to only look at status === "finished", so
+  // that match simply vanished from the page instead of showing as
+  // pending — a real match the user watched (or saw the result of
+  // elsewhere) looked like it had never been played. Including
+  // "unknown" here too surfaces it with its "Resultado pendiente"
+  // badge (see MatchCard) and lets it flip to a real score in place
+  // the moment a source answers, instead of disappearing.
   const finishedSorted = matches
-    .filter((m) => m.status === "finished" && m.kickoff !== null)
+    .filter((m) => (m.status === "finished" || m.status === "unknown") && m.kickoff !== null)
     .sort((a, b) => new Date(b.kickoff as string).getTime() - new Date(a.kickoff as string).getTime());
   const RECENT_WINDOW_MS = 10 * 24 * 60 * 60 * 1000;
   const latestFinished = finishedSorted[0]?.kickoff

@@ -11,7 +11,12 @@ const STATUS_LABEL: Record<Match["status"], string> = {
   scheduled: "Próximo",
   live: "En juego",
   finished: "Finalizado",
-  unknown: "Aplazado / pendiente",
+  // Not "Aplazado" (postponed) — that's rarely what's actually true here.
+  // This status means the real kickoff has already passed but neither
+  // free data source has reported a result yet (see apps/api's
+  // _demote_stale_scheduled_matches), so the match is still waiting on
+  // its score, not necessarily rescheduled.
+  unknown: "Resultado pendiente",
 };
 
 const STATUS_CLASSES: Record<Match["status"], string> = {
